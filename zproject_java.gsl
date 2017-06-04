@@ -814,7 +814,48 @@ implements AutoCloseable\
 }
 .endmacro
 
+.macro generate_jni_callback_c (argument)
+.    if type = "zactor_fn"
+void \
+.    else
+int \
+.    endif
+.    # TODO: verify that these don't duplicate
+$(type)_cb_wrapper(\
+.    # This method signature needs to be built on the model's knowledge of
+.    # the function callback type
+.    # Q: Where is that information available?
+.    if type = "zactor_fn"
+zsock_t* pipe, void* args\
+.    elsif type = "zloop_reader_fn"
+zloop_t *loop, zsock_t *reader, void* args\
+.    elsif type = "zloop_fn"
+zloop_t *loop, zmq_pollitem_t *item, void *arg\
+.    elsif type = "zloop_timer_fn"
+zloop_t *loop, int timer_id, void *arg\
+.    else
+garbage *unknown, void *arg\
+.    endif
+){
+    jni_cb_struct* wrapper = (jni_cb_struct)args;
+    JNIEnv* env = wrapper->env;
+    (*env)->Call\
+.    if type = "zactor_fn"
+Void\
+.    else
+Int\
+.    endif
+Method(env, wrapper->obj, wrapper->mid, wrapper->args);
+}
+.endmacro
+
 .macro generate_jni_method_c (method)
+.   for argument
+.       if callback = 1
+.           generate_jni_callback_c(argument)
+.       endif
+.   endfor
+
 .   if defined (my.method.return_self_p) & !my.method.is_destructor
 JNIEXPORT jlong JNICALL
 .   else
@@ -831,6 +872,14 @@ $(jni_shim_signature_c:))
     char *$(c_name)_ = (char *) (*env)->GetStringUTFChars (env, $(c_name), NULL);
 .       elsif type = "buffer"
     jbyte *$(c_name)_ = (byte *) (*env)->GetByteArrayElements (env, $(c_name), 0);
+.       elsif callback = 1
+    jclass $(c_name)_callbackClass = (*env)->GetObjectClass($(c_name));
+    jmethodID $(c_name)_method = (*env)->GetMethodID($(c_name)_callbackClass, "callback", $(cb_c_type));
+    if ($(c_name)_method == 0){
+        // Shortcut to throw a NoSuchMethodError
+        return;
+    }
+    $(type) $(c_name)_$(type) = $(type)_cb_wrapper;
 .       endif
 .   endfor
 .#
@@ -898,6 +947,14 @@ $(project.GENERATED_WARNING_HEADER:)
 #include <jni.h>
 #include "$(project.header:)"
 #include "$(my.cname:).h"
+
+// TODO: This doesn't really belong in here
+typedef jni_cb_struct{
+    JNIEnv* env;
+    jobject obj;
+    jmethodID mid;
+    jobject args;
+};
 
 .   for constructor where okay
 .       generate_jni_method_c (constructor)
