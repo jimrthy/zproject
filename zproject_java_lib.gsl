@@ -108,7 +108,33 @@ function resolve_container (container)
         my.container.jni_is_class = 1
 
     elsif my.container.callback ?= 1
-        return 1        #   Don't implement callbacks yet
+        # TODO: This seems like it really belongs in its own
+        # function
+
+        # The method signature varies, depending on
+        # the specific callback function type
+        # TODO: Generate the various ICallback definitions
+        my.container.jni_java_type = "ICallback"
+        my.container.jni_jni_type = "jobject"
+        # TODO: Really should generate the actual signature we need based on
+        # the model data associated with the callback argument.
+        # Q: How?
+        if my.container.type = "zactor_fn"
+            my.container.cb_c_type = "(Lorg/zeromq/czmq/Zsock;Ljava/lang/object)V"
+        elsif my.container.type = "zloop_reader_fn"
+            my.container.cb_c_type = "(Lorg/zeromq/czmq/Zloop;Lorg/zeromq/czmq/Zsock;Ljava/lang/object)I"
+        elsif my.container.type = "zloop_fn"
+            # The second parameter is a zmq_pollitem_t.
+            # Q: What's the JNI equivalent?
+            # Actually, as-written, there's a good chance that we'll really just
+            # be getting the int handle that refers back to the PollItem.
+            # That's probably also what we're getting back everywhere else.
+            my.container.cb_c_type = "(Lorg/zeromq/czmq/Zloop;Ljava/lang/object;Ljava/lang/object;)I"
+        elsif my.container.type = "zloop_timer_fn"
+            my.container.cb_c_type = "(Lorg/zeromq/czmq/Zloop;ILjava/lang/object;)I"
+        else
+            my.container.cb_c_type = "(unknown $(type))I"
+        endif
 
     elsif my.container.type = "va_list" \
     |     my.container.type = "FILE" \
@@ -169,6 +195,7 @@ function resolve_method (method)
 
         if variadic = 1
             if va_start <> "format"
+                # I think this is where the Zloop constructor breaks
                 jni_method_signature += " []"
                 jni_shim_invocation_java += " [0]"
             endif
@@ -197,6 +224,8 @@ function resolve_method (method)
                 jni_native_invocation_c += "$(comma)($(argument.c_type)) (intptr_t) &$(argument.c_name)"
             elsif jni_is_class = 1 | type = "anything" | type = "sockish"
                 jni_native_invocation_c += "$(comma)($(argument.c_type)) (intptr_t) $(argument.c_name)"
+            elsif argument.callback ?= 1
+                jni_native_invocation_c += "$(comma) $(argument.c_name)_$(argument.type)"
             else
                 jni_native_invocation_c += "$(comma)($(argument.c_type)) $(argument.c_name)"
             endif
